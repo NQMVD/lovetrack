@@ -104,8 +104,9 @@ function love.update(dt)
       grid_offset_y = grid_offset_y + pan_y
     elseif gesture:getState() == "zooming" then
       local center_x, center_y = gesture:getCenter()
+      local mouse_x, mouse_y = love.mouse.getPosition()
 
-      if center_x > screen_w * 0.5 then
+      if mouse_x > screen_w * 0.5 then
         local local_center_x = center_x - screen_w * 0.5
         local local_center_y = center_y
 
