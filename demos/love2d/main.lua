@@ -51,7 +51,7 @@ function love.update(dt)
       lua_fingers[finger.id] = {
         id = finger.id,
         x = finger.x,
-        y = 1 - finger.y,
+        y = finger.y,
         vx = finger.vx,
         vy = finger.vy,
         angle = finger.angle,
@@ -75,8 +75,22 @@ function love.draw()
   for id, finger in pairs(lua_fingers) do
     local color = finger.state == 1 and { 0, 1, 0 } or { 1, 0, 0 } -- Green for down, red for up
     love.graphics.setColor(color)
-    love.graphics.circle("fill", finger.x * love.graphics.getWidth(), finger.y * love.graphics.getHeight(),
-      finger.size * 10)
+    love.graphics.circle(
+      "fill",
+      finger.x * love.graphics.getWidth(),
+      finger.y * love.graphics.getHeight(),
+      finger.size * 10
+    )
+    -- also draw the volocity
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.line(
+      finger.x * love.graphics.getWidth(),
+      finger.y * love.graphics.getHeight(),
+      (finger.x + finger.vx * 0.05) * love.graphics.getWidth(),
+      (finger.y + (finger.vy) * 0.05) * love.graphics.getHeight()
+    )
+
     love.graphics.setColor(1, 1, 1)
     love.graphics.print(string.format("Finger %d: (%.2f, %.2f)", id, finger.x, finger.y),
       finger.x * love.graphics.getWidth(), finger.y * love.graphics.getHeight())
