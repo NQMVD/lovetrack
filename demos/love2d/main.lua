@@ -16,7 +16,7 @@ ffi.cdef [[
     void trackpad_stop();
 ]]
 
-local trackpad_lib = ffi.load("trackpad")
+local trackpad_lib = ffi.load("lovetrack")
 
 -- Max fingers the trackpad can detect (usually 11 for modern Mac trackpads)
 local MAX_FINGERS = 5

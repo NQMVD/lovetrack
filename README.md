@@ -28,7 +28,7 @@ The `TrackpadFinger` struct holds all the information for a single touch point o
     - `6`: Finger is lingering in range after a touch.
     - `7`: The finger has moved out of the trackpad's range.
 
-Disclaimer: the `state` values seem to work depend on factors i haven't been able to figure out yet. The values above are based on my observations, but they may not be accurate in all cases.
+Disclaimer: the `state` values seem to depend on factors i haven't been able to figure out yet. The values above are based on my observations, but they may not be accurate in all cases.
 
 ## Functions
 
