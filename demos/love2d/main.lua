@@ -1,270 +1,210 @@
-local Gestures = require("gestures")
+local Gesture = require("gesture")
 
-local gesture_detector
-local camera = { x = 0, y = 0, zoom = 1.0 }
+local gesture
+local font
+local text_scroll_y = 0
+local grid_offset_x = 0
+local grid_offset_y = 0
+local grid_zoom = 1.0
+local grid_shapes = {}
 
--- Visual feedback
-local pan_trail = {}
-local zoom_indicator = { active = false, x = 0, y = 0, scale = 1.0, timer = 0 }
-local scroll_indicator = { active = false, x = 0, y = 0, dx = 0, dy = 0, timer = 0 }
+-- Sample text for scrolling
+local sample_text = [[
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
+commodo consequat.
 
-function love.conf(t)
-  t.window.title = "Trackpad Gesture Detection Demo"
-  t.highdpi = true
-  t.window.msaa = 8
-  t.window.resizable = true
-  t.window.width = 1200
-  t.window.height = 800
-end
+Duis aute irure dolor in reprehenderit in voluptate velit esse cillum
+dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non
+proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium
+doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore
+veritatis et quasi architecto beatae vitae dicta sunt explicabo.
+
+Nemo enim ipsam voluptatem quia volupts sit aspernatur aut odit aut fugit,
+sed quia consequuntur magni dolores eos qui ratione voluptatem sequi
+nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet.
+
+At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis
+praesentium voluptatum deleniti atque corrupti quos dolores et quas
+molestias excepturi sint occaecati cupiditate non provident.
+
+This is more text to demonstrate scrolling behavior. The scrolling should
+be smooth and responsive to two-finger gestures. You should be able to
+scroll up and down easily without it switching to panning mode.
+
+More content here to make the text longer and test the scrolling
+functionality properly. The gesture detection should be robust and
+maintain the scrolling state throughout the gesture.
+
+Additional paragraphs to ensure we have enough content to scroll through.
+The text should scroll smoothly and naturally, just like in any other
+application that supports trackpad scrolling.
+]]
 
 function love.load()
-  -- Initialize gesture detector
-  gesture_detector = Gestures.new("liblovetrack.dylib")
-  gesture_detector:start()
+  love.window.setTitle("Multi-Touch Gesture Test - Fixed State Lock")
+  love.window.setMode(1000, 600)
 
-  -- Set up gesture callbacks
-  gesture_detector:on_scroll_start(function(x, y)
-    scroll_indicator.active = true
-    scroll_indicator.x = x
-    scroll_indicator.y = y
-    scroll_indicator.timer = 1.0
-    print(string.format("Scroll Start: (%.3f, %.3f)", x, y))
-  end)
+  font = love.graphics.newFont(14)
+  love.graphics.setFont(font)
 
-  gesture_detector:on_scroll_update(function(x, y, dx, dy, total_dx, total_dy)
-    -- Update camera position for scrolling
-    camera.x = camera.x - dx * 500 * camera.zoom
-    camera.y = camera.y - dy * 500 * camera.zoom
+  -- Initialize gesture detection with very sensitive zoom detection
+  gesture = Gesture.new({
+    deadzone_movement_activate = 2,
+    deadzone_movement_continue = 0.1,
+    deadzone_zoom_activate = 0.007,
+    deadzone_zoom_continue = 0.0005,
+    scroll_angle_max = math.rad(30),
+    smoothing_factor = 0.45,
+    zoom_sensitivity = 2.0,
+    min_zoom_distance = 0.01,
+  })
 
-    -- Update scroll indicator
-    scroll_indicator.x = x
-    scroll_indicator.y = y
-    scroll_indicator.dx = dx
-    scroll_indicator.dy = dy
-    scroll_indicator.timer = 1.0
-
-    print(string.format("Scroll Update: pos(%.3f, %.3f), delta(%.3f, %.3f), total(%.3f, %.3f)",
-      x, y, dx, dy, total_dx, total_dy))
-  end)
-
-  gesture_detector:on_scroll_end(function(dx, dy, total_dx, total_dy)
-    scroll_indicator.active = false
-    print(string.format("Scroll End: delta(%.3f, %.3f), total(%.3f, %.3f)", dx, dy, total_dx, total_dy))
-  end)
-
-  gesture_detector:on_pan_start(function(x, y)
-    pan_trail = { { x = x, y = y, time = love.timer.getTime() } }
-    print(string.format("Pan Start: (%.3f, %.3f)", x, y))
-  end)
-
-  gesture_detector:on_pan_update(function(x, y, dx, dy, total_dx, total_dy)
-    -- Update camera position
-    camera.x = camera.x - dx * 500 * camera.zoom
-    camera.y = camera.y - dy * 500 * camera.zoom
-
-    -- Add to pan trail
-    table.insert(pan_trail, { x = x, y = y, time = love.timer.getTime() })
-    if #pan_trail > 20 then
-      table.remove(pan_trail, 1)
-    end
-
-    print(string.format("Pan Update: pos(%.3f, %.3f), delta(%.3f, %.3f), total(%.3f, %.3f)",
-      x, y, dx, dy, total_dx, total_dy))
-  end)
-
-  gesture_detector:on_pan_end(function(x, y, total_dx, total_dy)
-    print(string.format("Pan End: (%.3f, %.3f), total(%.3f, %.3f)", x, y, total_dx, total_dy))
-  end)
-
-  gesture_detector:on_zoom_start(function(center_x, center_y, scale)
-    zoom_indicator.active = true
-    zoom_indicator.x = center_x
-    zoom_indicator.y = center_y
-    zoom_indicator.scale = scale
-    zoom_indicator.timer = 1.0
-    print(string.format("Zoom Start: center(%.3f, %.3f), scale=%.3f", center_x, center_y, scale))
-  end)
-
-  gesture_detector:on_zoom_update(function(center_x, center_y, scale, distance_change)
-    -- Update camera zoom
-    local zoom_factor = scale / camera.zoom
-    camera.zoom = scale
-
-    -- Zoom towards the center point
-    local screen_center_x = center_x * love.graphics.getWidth()
-    local screen_center_y = center_y * love.graphics.getHeight()
-
-    camera.x = camera.x + (screen_center_x - camera.x) * (1 - 1 / zoom_factor)
-    camera.y = camera.y + (screen_center_y - camera.y) * (1 - 1 / zoom_factor)
-
-    -- Update zoom indicator
-    zoom_indicator.x = center_x
-    zoom_indicator.y = center_y
-    zoom_indicator.scale = scale
-    zoom_indicator.timer = 1.0
-
-    print(string.format("Zoom Update: center(%.3f, %.3f), scale=%.3f, change=%.3f",
-      center_x, center_y, scale, distance_change))
-  end)
-
-  gesture_detector:on_zoom_end(function(center_x, center_y, final_scale)
-    zoom_indicator.active = false
-    print(string.format("Zoom End: center(%.3f, %.3f), final_scale=%.3f", center_x, center_y, final_scale))
-  end)
-
-  print("Gesture Detection Demo Started")
-  print("- Use 2 fingers to pan or zoom (pinch/expand)")
+  -- Generate grid shapes
+  for i = 1, 50 do
+    table.insert(grid_shapes, {
+      x = (i % 10) * 80 + 40,
+      y = math.floor((i - 1) / 10) * 80 + 40,
+      color = {
+        love.math.random(0.3, 1.0),
+        love.math.random(0.3, 1.0),
+        love.math.random(0.3, 1.0)
+      },
+      shape = love.math.random(1, 3)
+    })
+  end
 end
 
 function love.update(dt)
-  gesture_detector:update(dt)
+  gesture:update(dt)
 
-  -- Update visual indicators
-  -- Removed scroll_indicator update
+  local mouse_x = love.mouse.getX()
+  local screen_w = love.graphics.getWidth()
 
-  if zoom_indicator.timer > 0 then
-    zoom_indicator.timer = zoom_indicator.timer - dt
-  end
+  -- Determine which view we're in
+  if mouse_x < screen_w * 0.5 then
+    -- Left view - text scrolling
+    gesture:setScrollLock(false)
+    local scroll_x, scroll_y = gesture:getScrollDelta()
+    if gesture:getState() == "scrolling" then
+      text_scroll_y = text_scroll_y - scroll_y * 2.0
+      text_scroll_y = math.max(0, math.min(text_scroll_y, 3000))
+    end
+  else
+    -- Right view - grid panning and zooming
+    gesture:setScrollLock(true)
 
-  if scroll_indicator.timer > 0 then
-    scroll_indicator.timer = scroll_indicator.timer - dt
-  end
+    local pan_x, pan_y = gesture:getPanDelta()
+    local zoom_factor = gesture:getZoomFactor()
 
-  -- Clean up old pan trail
-  local current_time = love.timer.getTime()
-  for i = #pan_trail, 1, -1 do
-    if current_time - pan_trail[i].time > 1.0 then
-      table.remove(pan_trail, i)
+    if gesture:getState() == "panning" then
+      grid_offset_x = grid_offset_x + pan_x
+      grid_offset_y = grid_offset_y + pan_y
+    elseif gesture:getState() == "zooming" then
+      local center_x, center_y = gesture:getCenter()
+
+      if center_x > screen_w * 0.5 then
+        local local_center_x = center_x - screen_w * 0.5
+        local local_center_y = center_y
+
+        local prev_zoom = grid_zoom
+        grid_zoom = grid_zoom * zoom_factor
+        grid_zoom = math.max(0.2, math.min(8.0, grid_zoom))
+
+        if zoom_factor ~= 1.0 then
+          local zoom_ratio = grid_zoom / prev_zoom
+          grid_offset_x = (grid_offset_x - local_center_x) * zoom_ratio + local_center_x
+          grid_offset_y = (grid_offset_y - local_center_y) * zoom_ratio + local_center_y
+        end
+      end
     end
   end
 end
 
 function love.draw()
-  love.graphics.clear(0.1, 0.1, 0.15)
+  local screen_w, screen_h = love.graphics.getDimensions()
+  local mid_x = screen_w * 0.5
 
-  -- Apply camera transform
+  -- Draw divider
+  love.graphics.setColor(0.3, 0.3, 0.3)
+  love.graphics.line(mid_x, 0, mid_x, screen_h)
+
+  -- Status info with color coding
+  local state = gesture:getState()
+  local scroll_x, scroll_y = gesture:getScrollDelta()
+  local pan_x, pan_y = gesture:getPanDelta()
+  local zoom = gesture:getZoomFactor()
+
+  if state == "scrolling" then
+    love.graphics.setColor(0.3, 1, 0.3)
+  elseif state == "panning" then
+    love.graphics.setColor(0.3, 0.3, 1)
+  elseif state == "zooming" then
+    love.graphics.setColor(1, 0.3, 0.3)
+  else
+    love.graphics.setColor(0.7, 0.7, 0.7)
+  end
+
+  love.graphics.print("State: " .. state, 10, 10)
+  love.graphics.setColor(1, 1, 1)
+  love.graphics.print(string.format("Scroll: %.2f, %.2f", scroll_x, scroll_y), 10, 25)
+  love.graphics.print(string.format("Pan: %.2f, %.2f", pan_x, pan_y), 10, 40)
+  love.graphics.print(string.format("Zoom: %.3f", zoom), 10, 55)
+
+  -- Left view - scrollable text
+  love.graphics.print("Text View (Try scrolling vertically)", 10, 80)
+
+  love.graphics.setScissor(0, 100, mid_x, screen_h - 100)
+  love.graphics.print(sample_text, 10, 100 - text_scroll_y)
+  love.graphics.setScissor()
+
+  -- Right view - pannable/zoomable grid
+  love.graphics.setScissor(mid_x, 0, mid_x, screen_h)
   love.graphics.push()
-  love.graphics.translate(-camera.x, -camera.y)
-  love.graphics.scale(camera.zoom)
+  love.graphics.translate(mid_x + grid_offset_x, grid_offset_y)
+  love.graphics.scale(grid_zoom, grid_zoom)
 
-  -- Draw a grid to show pan/zoom effects
-  love.graphics.setColor(0.3, 0.3, 0.4, 0.5)
-  love.graphics.setLineWidth(1)
+  love.graphics.setColor(1, 1, 1)
+  love.graphics.print("Grid View (Try pinch/zoom)", 10, 10)
+  love.graphics.print("Zoom: " .. string.format("%.2f", grid_zoom), 10, 30)
 
-  local grid_size = 100
-  local start_x = math.floor(camera.x / camera.zoom / grid_size) * grid_size
-  local start_y = math.floor(camera.y / camera.zoom / grid_size) * grid_size
-  local end_x = start_x + love.graphics.getWidth() / camera.zoom + grid_size
-  local end_y = start_y + love.graphics.getHeight() / camera.zoom + grid_size
+  -- Draw zoom center indicator when zooming
+  -- if gesture:getState() == "zooming" then
+  --   local center_x, center_y = gesture:getCenter()
+  --   if center_x > mid_x then
+  --     love.graphics.push()
+  --     love.graphics.origin()
+  --     love.graphics.setColor(1, 0, 0, 0.8)
+  --     love.graphics.circle("line", center_x, center_y, 15)
+  --     love.graphics.line(center_x - 8, center_y, center_x + 8, center_y)
+  --     love.graphics.line(center_x, center_y - 8, center_x, center_y + 8)
+  --     love.graphics.pop()
+  --   end
+  -- end
 
-  for x = start_x, end_x, grid_size do
-    love.graphics.line(x, start_y, x, end_y)
-  end
-  for y = start_y, end_y, grid_size do
-    love.graphics.line(start_x, y, end_x, y)
-  end
-
-  -- Draw some objects to interact with
-  love.graphics.setColor(0.8, 0.4, 0.2)
-  love.graphics.rectangle("fill", 200, 200, 100, 100)
-  love.graphics.setColor(0.2, 0.8, 0.4)
-  love.graphics.circle("fill", 500, 300, 50)
-  love.graphics.setColor(0.4, 0.2, 0.8)
-  love.graphics.rectangle("fill", 300, 500, 150, 75)
-
-  love.graphics.pop()
-
-  -- Draw current finger positions
-  love.graphics.setColor(1, 1, 1, 0.8)
-  for id, finger in pairs(gesture_detector:getFingers()) do
-    local x = finger.x * love.graphics.getWidth()
-    local y = finger.y * love.graphics.getHeight()
-
-    -- Draw finger circle
-    local color = finger.state == 4 and { 0, 1, 0 } or { 1, 1, 0 }
-    love.graphics.setColor(color[1], color[2], color[3], 0.7)
-    love.graphics.circle("fill", x, y, finger.size * 20 + 10)
-
-    -- Draw velocity vector
-    love.graphics.setColor(1, 1, 1, 0.8)
-    love.graphics.setLineWidth(2)
-    love.graphics.line(x, y, x + finger.vx * 100, y + finger.vy * 100)
-
-    -- Draw finger ID
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print(tostring(finger.id), x - 5, y - 5)
-  end
-
-  -- Draw pan trail
-  if #pan_trail > 1 then
-    love.graphics.setColor(1, 0.5, 0, 0.6)
-    love.graphics.setLineWidth(3)
-    for i = 2, #pan_trail do
-      local p1 = pan_trail[i - 1]
-      local p2 = pan_trail[i]
-      love.graphics.line(
-        p1.x * love.graphics.getWidth(), p1.y * love.graphics.getHeight(),
-        p2.x * love.graphics.getWidth(), p2.y * love.graphics.getHeight()
-      )
+  -- Draw grid shapes
+  for _, shape in ipairs(grid_shapes) do
+    love.graphics.setColor(shape.color)
+    if shape.shape == 1 then
+      love.graphics.circle("fill", shape.x, shape.y, 20)
+    elseif shape.shape == 2 then
+      love.graphics.rectangle("fill", shape.x - 20, shape.y - 20, 40, 40)
+    else
+      love.graphics.polygon("fill", shape.x, shape.y - 20,
+        shape.x - 20, shape.y + 15,
+        shape.x + 20, shape.y + 15)
     end
   end
 
-  -- Removed scroll indicator drawing
-
-  -- Draw scroll indicator
-  if scroll_indicator.active and scroll_indicator.timer > 0 then
-    local alpha = scroll_indicator.timer
-    love.graphics.setColor(0, 1, 0, alpha)
-    local x = scroll_indicator.x * love.graphics.getWidth()
-    local y = scroll_indicator.y * love.graphics.getHeight()
-    local line_length = 50
-    love.graphics.setLineWidth(3)
-    love.graphics.line(x, y, x + scroll_indicator.dx * line_length, y + scroll_indicator.dy * line_length)
-    love.graphics.print(string.format("SCROLL %.2f, %.2f", scroll_indicator.dx, scroll_indicator.dy), x + 10, y - 20)
-  end
-
-  -- Draw zoom indicator
-  if zoom_indicator.active and zoom_indicator.timer > 0 then
-    local alpha = zoom_indicator.timer
-    love.graphics.setColor(1, 0, 1, alpha)
-    local x = zoom_indicator.x * love.graphics.getWidth()
-    local y = zoom_indicator.y * love.graphics.getHeight()
-    local radius = 30 * zoom_indicator.scale
-    love.graphics.setLineWidth(3)
-    love.graphics.circle("line", x, y, radius)
-    love.graphics.print(string.format("ZOOM %.2fx", zoom_indicator.scale), x + radius + 10, y)
-  end
-
-  -- Draw UI
-  love.graphics.setColor(1, 1, 1, 0.9)
-  love.graphics.print("Gesture Detection Demo", 10, 10)
-  love.graphics.print(string.format("Camera: x=%.1f, y=%.1f, zoom=%.2fx", camera.x, camera.y, camera.zoom), 10, 30)
-  love.graphics.print(string.format("Fingers: %d", gesture_detector:getFingerCount()), 10, 50)
-  love.graphics.print(string.format("Scrolling Enabled: %s (Press 's' to toggle)", tostring(gesture_detector.enable_scrolling)), 10, 70)
-
-  -- Instructions
-  love.graphics.setColor(1, 1, 1, 0.7)
-  love.graphics.print("Instructions:", 10, love.graphics.getHeight() - 80)
-  love.graphics.print("• 2 fingers: Pan or Zoom (pinch/expand)", 10, love.graphics.getHeight() - 60)
-  love.graphics.print("• ESC: Quit", 10, love.graphics.getHeight() - 40)
-  love.graphics.print("• R: Reset Camera", 10, love.graphics.getHeight() - 20)
-end
-
-function love.keypressed(key)
-  if key == "escape" then
-    love.event.quit()
-  elseif key == "r" then
-    -- Reset camera
-    camera.x = 0
-    camera.y = 0
-    camera.zoom = 1.0
-  elseif key == "s" then
-    gesture_detector:set_enable_scrolling(not gesture_detector.enable_scrolling)
-    print(string.format("Scrolling Enabled: %s", tostring(gesture_detector.enable_scrolling)))
-  end
+  love.graphics.pop()
+  love.graphics.setScissor()
 end
 
 function love.quit()
-  gesture_detector:stop()
-  print("Gesture Detection Demo Stopped")
+  if gesture then
+    gesture:destroy()
+  end
 end
