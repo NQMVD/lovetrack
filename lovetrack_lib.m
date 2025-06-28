@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <math.h>
-#include "trackpad_lib.h"
+#include "lovetrack_lib.h"
 
 #define MAX_FINGERS 20
 

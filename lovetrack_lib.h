@@ -1,5 +1,5 @@
-#ifndef trackpad_lib_h
-#define trackpad_lib_h
+#ifndef lovetrack_lib_h
+#define lovetrack_lib_h
 
 // A struct to hold the data for a single touch point.
 typedef struct {

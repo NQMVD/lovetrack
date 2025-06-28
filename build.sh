@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-clang -shared -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation -lpthread -o libtrackpad.dylib trackpad_lib.m
+clang -shared -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation -lpthread -o liblovetrack.dylib lovetrack_lib.m
