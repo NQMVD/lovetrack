@@ -1,10 +1,10 @@
 --[[
-    two_finger_gestures.lua
-    A Lua library for detecting two-finger gestures (scroll, pan, zoom) from a trackpad.
+    gestures.lua
+    A Lua library for detecting two-finger gestures (pan and zoom) from a trackpad.
     This library uses the `lovetrack` C library via LuaJIT FFI.
 
     Features:
-    - Differentiates between scrolling, panning, and zooming with two fingers.
+    - Differentiates between panning and zooming with two fingers.
     - Uses deadzones to prevent accidental gestures.
     - Uses velocity to determine gesture intent.
     - Locks the current gesture until fingers are lifted.
@@ -30,8 +30,8 @@ ffi.cdef[[
     void trackpad_stop();
 ]]
 
-local TwoFingerGestureDetector = {}
-TwoFingerGestureDetector.__index = TwoFingerGestureDetector
+local Gestures = {}
+Gestures.__index = Gestures
 
 -- =============================================================================
 -- Configuration
@@ -45,16 +45,12 @@ local ZOOM_START_DISTANCE_DEADZONE = 0.01 -- How much finger distance must chang
 -- Velocity Thresholds
 local GESTURE_START_VELOCITY_SQ = 0.00001 -- Squared velocity to start a gesture
 
--- Gesture Differentiation
-local PAN_VS_SCROLL_ANGLE = 35 -- Angle in degrees to differentiate pan vs scroll.
-                               -- < threshold: pan, > threshold: scroll
-
 -- =============================================================================
 -- Public Methods
 -- =============================================================================
 
-function TwoFingerGestureDetector.new(library_path)
-    local self = setmetatable({}, TwoFingerGestureDetector)
+function Gestures.new(library_path)
+    local self = setmetatable({}, Gestures)
 
     -- Load the trackpad library
     self.trackpad_lib = ffi.load(library_path or "liblovetrack.dylib")
@@ -62,9 +58,12 @@ function TwoFingerGestureDetector.new(library_path)
 
     -- Callbacks
     self.callbacks = {
-        on_scroll = nil,
-        on_pan = nil,
-        on_zoom = nil,
+        on_pan_start = nil,
+        on_pan_update = nil,
+        on_pan_end = nil,
+        on_zoom_start = nil,
+        on_zoom_update = nil,
+        on_zoom_end = nil,
         on_gesture_end = nil
     }
 
@@ -72,7 +71,7 @@ function TwoFingerGestureDetector.new(library_path)
     return self
 end
 
-function TwoFingerGestureDetector:start()
+function Gestures:start()
     if self.trackpad_lib.trackpad_start() ~= 0 then
         error("Failed to start trackpad service!")
     end
@@ -80,61 +79,108 @@ function TwoFingerGestureDetector:start()
     return true
 end
 
-function TwoFingerGestureDetector:stop()
+function Gestures:stop()
     if self.is_running then
         self.trackpad_lib.trackpad_stop()
         self.is_running = false
     end
 end
 
-function TwoFingerGestureDetector:update(dt)
+function Gestures:update(dt)
     if not self.is_running then return end
 
     -- Poll for new finger data
     local n_fingers = self.trackpad_lib.trackpad_poll(self.c_fingers_array, MAX_FINGERS)
-    local current_fingers = {}
+    self.fingers = {}
     for i = 0, n_fingers - 1 do
-        table.insert(current_fingers, self.c_fingers_array[i])
+        local finger = self.c_fingers_array[i]
+        self.fingers[finger.id] = {
+            id = finger.id,
+            x = finger.x,
+            y = finger.y,
+            vx = finger.vx,
+            vy = finger.vy,
+            angle = finger.angle,
+            major_axis = finger.major_axis,
+            minor_axis = finger.minor_axis,
+            size = finger.size,
+            state = finger.state
+        }
     end
 
-    local finger_count = #current_fingers
+    local finger_count = self:getFingerCount()
 
-    if finger_count ~= 2 then
+    if finger_count == 2 then
+        self:_process_two_finger_gestures(dt)
+    else
         -- If gesture was active, end it
         if self.current_gesture ~= "none" then
             if self.callbacks.on_gesture_end then
                 self.callbacks.on_gesture_end(self.current_gesture)
             end
+            if self.current_gesture == "pan" and self.callbacks.on_pan_end then
+                self.callbacks.on_pan_end(self.last_pan_x, self.last_pan_y, self.total_pan_dx, self.total_pan_dy)
+            end
+            if self.current_gesture == "zoom" and self.callbacks.on_zoom_end then
+                self.callbacks.on_zoom_end(self.zoom_center_x, self.zoom_center_y, self.zoom_scale)
+            end
         end
         self:_reset_state()
-        return
     end
-
-    -- We have two fingers, process gestures
-    self:_process_two_finger_gestures(current_fingers, dt)
 end
 
 -- Callback setters
-function TwoFingerGestureDetector:on_scroll(callback) self.callbacks.on_scroll = callback end
-function TwoFingerGestureDetector:on_pan(callback) self.callbacks.on_pan = callback end
-function TwoFingerGestureDetector:on_zoom(callback) self.callbacks.on_zoom = callback end
-function TwoFingerGestureDetector:on_gesture_end(callback) self.callbacks.on_gesture_end = callback end
+function Gestures:on_pan_start(callback) self.callbacks.on_pan_start = callback end
+function Gestures:on_pan_update(callback) self.callbacks.on_pan_update = callback end
+function Gestures:on_pan_end(callback) self.callbacks.on_pan_end = callback end
+function Gestures:on_zoom_start(callback) self.callbacks.on_zoom_start = callback end
+function Gestures:on_zoom_update(callback) self.callbacks.on_zoom_update = callback end
+function Gestures:on_zoom_end(callback) self.callbacks.on_zoom_end = callback end
+function Gestures:on_gesture_end(callback) self.callbacks.on_gesture_end = callback end
 
 
 -- =============================================================================
 -- Internal Methods
 -- =============================================================================
 
-function TwoFingerGestureDetector:_reset_state()
-    self.current_gesture = "none" -- "none", "starting", "scroll", "pan", "zoom"
+function Gestures:_reset_state()
+    self.current_gesture = "none" -- "none", "starting", "pan", "zoom"
     self.start_fingers = {}
     self.start_midpoint = { x = 0, y = 0 }
     self.start_distance = 0
     self.last_midpoint = { x = 0, y = 0 }
     self.last_distance = 0
+    self.last_pan_x = 0
+    self.last_pan_y = 0
+    self.total_pan_dx = 0
+    self.total_pan_dy = 0
+    self.zoom_center_x = 0
+    self.zoom_center_y = 0
+    self.zoom_scale = 1.0
 end
 
-function TwoFingerGestureDetector:_process_two_finger_gestures(fingers, dt)
+function Gestures:_get_fingers_array()
+    local fingers = {}
+    for _, finger in pairs(self.fingers) do
+        table.insert(fingers, finger)
+    end
+    return fingers
+end
+
+function Gestures:getFingerCount()
+    local count = 0
+    for _ in pairs(self.fingers) do
+        count = count + 1
+    end
+    return count
+end
+
+function Gestures:getFingers()
+    return self.fingers
+end
+
+function Gestures:_process_two_finger_gestures(dt)
+    local fingers = self:_get_fingers_array()
     local f1 = fingers[1]
     local f2 = fingers[2]
 
@@ -173,17 +219,15 @@ function TwoFingerGestureDetector:_process_two_finger_gestures(fingers, dt)
         -- Determine gesture type: zoom has priority
         if zoom_dist > ZOOM_START_DISTANCE_DEADZONE then
             self.current_gesture = "zoom"
+            self.zoom_center_x = midpoint.x
+            self.zoom_center_y = midpoint.y
+            if self.callbacks.on_zoom_start then
+                self.callbacks.on_zoom_start(self.zoom_center_x, self.zoom_center_y, self.zoom_scale)
+            end
         else
-            -- Differentiate between pan and scroll based on angle
-            local move_vec = { x = midpoint.x - self.start_midpoint.x, y = midpoint.y - self.start_midpoint.y }
-            local finger_vec = { x = self.start_fingers[2].x - self.start_fingers[1].x, y = self.start_fingers[2].y - self.start_fingers[1].y }
-
-            local angle = self:_angle_between_vectors(move_vec, finger_vec)
-
-            if angle > 90 - PAN_VS_SCROLL_ANGLE and angle < 90 + PAN_VS_SCROLL_ANGLE then
-                self.current_gesture = "scroll"
-            else
-                self.current_gesture = "pan"
+            self.current_gesture = "pan"
+            if self.callbacks.on_pan_start then
+                self.callbacks.on_pan_start(midpoint.x, midpoint.y)
             end
         end
     end
@@ -192,19 +236,14 @@ function TwoFingerGestureDetector:_process_two_finger_gestures(fingers, dt)
     local delta_midpoint = { x = midpoint.x - self.last_midpoint.x, y = midpoint.y - self.last_midpoint.y }
 
     if self.current_gesture == "zoom" then
-        local scale = distance / self.start_distance
-        if self.callbacks.on_zoom then
-            self.callbacks.on_zoom(midpoint.x, midpoint.y, scale, distance - self.last_distance)
-        end
-
-    elseif self.current_gesture == "scroll" then
-        if self.callbacks.on_scroll then
-            self.callbacks.on_scroll(delta_midpoint.x, delta_midpoint.y)
+        self.zoom_scale = distance / self.start_distance
+        if self.callbacks.on_zoom_update then
+            self.callbacks.on_zoom_update(midpoint.x, midpoint.y, self.zoom_scale, distance - self.last_distance)
         end
 
     elseif self.current_gesture == "pan" then
-        if self.callbacks.on_pan then
-            self.callbacks.on_pan(delta_midpoint.x, delta_midpoint.y)
+        if self.callbacks.on_pan_update then
+            self.callbacks.on_pan_update(midpoint.x, midpoint.y, delta_midpoint.x, delta_midpoint.y, midpoint.x - self.start_midpoint.x, midpoint.y - self.start_midpoint.y)
         end
     end
 
@@ -213,13 +252,4 @@ function TwoFingerGestureDetector:_process_two_finger_gestures(fingers, dt)
     self.last_distance = distance
 end
 
-function TwoFingerGestureDetector:_angle_between_vectors(v1, v2)
-    local dot = v1.x * v2.x + v1.y * v2.y
-    local mag1 = math.sqrt(v1.x^2 + v1.y^2)
-    local mag2 = math.sqrt(v2.x^2 + v2.y^2)
-    if mag1 == 0 or mag2 == 0 then return 0 end
-    local cos_angle = dot / (mag1 * mag2)
-    return math.deg(math.acos(math.max(-1, math.min(1, cos_angle))))
-end
-
-return TwoFingerGestureDetector
+return Gestures
