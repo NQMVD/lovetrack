@@ -54,6 +54,8 @@ int internal_callback(int device, Finger *data, int nFingers, double timestamp, 
             .size = f->size,
             .state = f->state
         };
+        g_finger_buffer[i].y = 1.0 - g_finger_buffer[i].y; // Invert Y coordinate
+        g_finger_buffer[i].vy = 0.0 - g_finger_buffer[i].vy; // Invert Y coordinate
     }
     pthread_mutex_unlock(&g_mutex);
     return 0;
