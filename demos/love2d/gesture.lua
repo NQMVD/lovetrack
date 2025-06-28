@@ -17,6 +17,7 @@ typedef struct {
 
 int trackpad_start();
 int trackpad_poll(TrackpadFinger* fingers, int max_fingers);
+void trackpad_reset(TrackpadFinger* fingers, int max_fingers);
 void trackpad_stop();
 ]]
 
@@ -139,10 +140,12 @@ function Gesture:_getFingerValues()
   for i = 0, 10 do
     if self.fingers[i].id ~= 0 then
       local value = self.fingers[i].state
-      min_value = math.min(min_value, value)
-      max_value = math.max(max_value, value)
-      total_value = total_value + value
-      count = count + 1
+      if value < 7 then
+        min_value = math.min(min_value, value)
+        max_value = math.max(max_value, value)
+        total_value = total_value + value
+        count = count + 1
+      end
     end
   end
   if count > 1 then
