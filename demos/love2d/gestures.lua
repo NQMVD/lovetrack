@@ -45,6 +45,9 @@ local ZOOM_START_DISTANCE_DEADZONE = 0.01 -- How much finger distance must chang
 -- Velocity Thresholds
 local GESTURE_START_VELOCITY_SQ = 0.00001 -- Squared velocity to start a gesture
 
+-- Scrolling
+local SCROLL_ANGLE_THRESHOLD = math.pi / 4 -- 45 degrees in radians. Angle from horizontal/vertical to trigger scroll.
+
 -- =============================================================================
 -- Public Methods
 -- =============================================================================
@@ -64,8 +67,15 @@ function Gestures.new(library_path)
         on_zoom_start = nil,
         on_zoom_update = nil,
         on_zoom_end = nil,
+        on_scroll_start = nil,
+        on_scroll_update = nil,
+        on_scroll_end = nil,
         on_gesture_end = nil
     }
+
+    -- Settings
+    self.enable_scrolling = true -- New setting to enable/disable scrolling
+
 
     self:_reset_state()
     return self
@@ -124,6 +134,9 @@ function Gestures:update(dt)
             if self.current_gesture == "zoom" and self.callbacks.on_zoom_end then
                 self.callbacks.on_zoom_end(self.zoom_center_x, self.zoom_center_y, self.zoom_scale)
             end
+            if self.current_gesture == "scroll" and self.callbacks.on_scroll_end then
+                self.callbacks.on_scroll_end(self.last_scroll_dx, self.last_scroll_dy, self.total_scroll_dx, self.total_scroll_dy)
+            end
         end
         self:_reset_state()
     end
@@ -136,7 +149,13 @@ function Gestures:on_pan_end(callback) self.callbacks.on_pan_end = callback end
 function Gestures:on_zoom_start(callback) self.callbacks.on_zoom_start = callback end
 function Gestures:on_zoom_update(callback) self.callbacks.on_zoom_update = callback end
 function Gestures:on_zoom_end(callback) self.callbacks.on_zoom_end = callback end
+function Gestures:on_scroll_start(callback) self.callbacks.on_scroll_start = callback end
+function Gestures:on_scroll_update(callback) self.callbacks.on_scroll_update = callback end
+function Gestures:on_scroll_end(callback) self.callbacks.on_scroll_end = callback end
 function Gestures:on_gesture_end(callback) self.callbacks.on_gesture_end = callback end
+
+-- Settings setters
+function Gestures:set_enable_scrolling(enable) self.enable_scrolling = enable end
 
 
 -- =============================================================================
@@ -144,7 +163,7 @@ function Gestures:on_gesture_end(callback) self.callbacks.on_gesture_end = callb
 -- =============================================================================
 
 function Gestures:_reset_state()
-    self.current_gesture = "none" -- "none", "starting", "pan", "zoom"
+    self.current_gesture = "none" -- "none", "starting", "pan", "zoom", "scroll"
     self.start_fingers = {}
     self.start_midpoint = { x = 0, y = 0 }
     self.start_distance = 0
@@ -157,6 +176,10 @@ function Gestures:_reset_state()
     self.zoom_center_x = 0
     self.zoom_center_y = 0
     self.zoom_scale = 1.0
+    self.last_scroll_dx = 0
+    self.last_scroll_dy = 0
+    self.total_scroll_dx = 0
+    self.total_scroll_dy = 0
 end
 
 function Gestures:_get_fingers_array()
@@ -189,6 +212,7 @@ function Gestures:_process_two_finger_gestures(dt)
     local dx, dy = f2.x - f1.x, f2.y - f1.y
     local distance = math.sqrt(dx*dx + dy*dy)
     local avg_velocity_sq = ((f1.vx + f2.vx)/2)^2 + ((f1.vy + f2.vy)/2)^2
+    local delta_midpoint = { x = midpoint.x - self.last_midpoint.x, y = midpoint.y - self.last_midpoint.y }
 
     -- State: "none" -> "starting"
     -- This is the first frame with two fingers. Record initial state.
@@ -224,6 +248,29 @@ function Gestures:_process_two_finger_gestures(dt)
             if self.callbacks.on_zoom_start then
                 self.callbacks.on_zoom_start(self.zoom_center_x, self.zoom_center_y, self.zoom_scale)
             end
+        elseif self.enable_scrolling and (math.abs(delta_midpoint.x) > 0 or math.abs(delta_midpoint.y) > 0) then
+            -- Calculate angle of movement
+            local angle = math.atan2(delta_midpoint.y, delta_midpoint.x)
+            -- Normalize angle to be between 0 and 2*PI
+            angle = (angle + 2 * math.pi) % (2 * math.pi)
+
+            -- Check if movement is primarily horizontal or vertical within the threshold
+            local is_horizontal_scroll = (angle < SCROLL_ANGLE_THRESHOLD or angle > 2 * math.pi - SCROLL_ANGLE_THRESHOLD) or
+                                         (angle > math.pi - SCROLL_ANGLE_THRESHOLD and angle < math.pi + SCROLL_ANGLE_THRESHOLD)
+            local is_vertical_scroll = (angle > math.pi / 2 - SCROLL_ANGLE_THRESHOLD and angle < math.pi / 2 + SCROLL_ANGLE_THRESHOLD) or
+                                       (angle > 3 * math.pi / 2 - SCROLL_ANGLE_THRESHOLD and angle < 3 * math.pi / 2 + SCROLL_ANGLE_THRESHOLD)
+
+            if is_horizontal_scroll or is_vertical_scroll then
+                self.current_gesture = "scroll"
+                if self.callbacks.on_scroll_start then
+                    self.callbacks.on_scroll_start(midpoint.x, midpoint.y)
+                end
+            else
+                self.current_gesture = "pan"
+                if self.callbacks.on_pan_start then
+                    self.callbacks.on_pan_start(midpoint.x, midpoint.y)
+                end
+            end
         else
             self.current_gesture = "pan"
             if self.callbacks.on_pan_start then
@@ -233,8 +280,6 @@ function Gestures:_process_two_finger_gestures(dt)
     end
 
     -- State: gesture is active, execute and send callbacks
-    local delta_midpoint = { x = midpoint.x - self.last_midpoint.x, y = midpoint.y - self.last_midpoint.y }
-
     if self.current_gesture == "zoom" then
         self.zoom_scale = distance / self.start_distance
         if self.callbacks.on_zoom_update then
@@ -244,6 +289,14 @@ function Gestures:_process_two_finger_gestures(dt)
     elseif self.current_gesture == "pan" then
         if self.callbacks.on_pan_update then
             self.callbacks.on_pan_update(midpoint.x, midpoint.y, delta_midpoint.x, delta_midpoint.y, midpoint.x - self.start_midpoint.x, midpoint.y - self.start_midpoint.y)
+        end
+    elseif self.current_gesture == "scroll" then
+        self.last_scroll_dx = delta_midpoint.x
+        self.last_scroll_dy = delta_midpoint.y
+        self.total_scroll_dx = self.total_scroll_dx + delta_midpoint.x
+        self.total_scroll_dy = self.total_scroll_dy + delta_midpoint.y
+        if self.callbacks.on_scroll_update then
+            self.callbacks.on_scroll_update(midpoint.x, midpoint.y, delta_midpoint.x, delta_midpoint.y, self.total_scroll_dx, self.total_scroll_dy)
         end
     end
 

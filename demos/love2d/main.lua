@@ -2,13 +2,11 @@ local Gestures = require("gestures")
 
 local gesture_detector
 local camera = { x = 0, y = 0, zoom = 1.0 }
-local scroll_history = {}
-local max_scroll_history = 50
 
 -- Visual feedback
 local pan_trail = {}
 local zoom_indicator = { active = false, x = 0, y = 0, scale = 1.0, timer = 0 }
--- Removed scroll_indicator as scroll is now part of pan
+local scroll_indicator = { active = false, x = 0, y = 0, dx = 0, dy = 0, timer = 0 }
 
 function love.conf(t)
   t.window.title = "Trackpad Gesture Detection Demo"
@@ -25,7 +23,34 @@ function love.load()
   gesture_detector:start()
 
   -- Set up gesture callbacks
-  -- Removed on_scroll callback
+  gesture_detector:on_scroll_start(function(x, y)
+    scroll_indicator.active = true
+    scroll_indicator.x = x
+    scroll_indicator.y = y
+    scroll_indicator.timer = 1.0
+    print(string.format("Scroll Start: (%.3f, %.3f)", x, y))
+  end)
+
+  gesture_detector:on_scroll_update(function(x, y, dx, dy, total_dx, total_dy)
+    -- Update camera position for scrolling
+    camera.x = camera.x - dx * 500 * camera.zoom
+    camera.y = camera.y - dy * 500 * camera.zoom
+
+    -- Update scroll indicator
+    scroll_indicator.x = x
+    scroll_indicator.y = y
+    scroll_indicator.dx = dx
+    scroll_indicator.dy = dy
+    scroll_indicator.timer = 1.0
+
+    print(string.format("Scroll Update: pos(%.3f, %.3f), delta(%.3f, %.3f), total(%.3f, %.3f)",
+      x, y, dx, dy, total_dx, total_dy))
+  end)
+
+  gesture_detector:on_scroll_end(function(dx, dy, total_dx, total_dy)
+    scroll_indicator.active = false
+    print(string.format("Scroll End: delta(%.3f, %.3f), total(%.3f, %.3f)", dx, dy, total_dx, total_dy))
+  end)
 
   gesture_detector:on_pan_start(function(x, y)
     pan_trail = { { x = x, y = y, time = love.timer.getTime() } }
@@ -101,8 +126,9 @@ function love.update(dt)
     zoom_indicator.timer = zoom_indicator.timer - dt
   end
 
-  -- Clean up old scroll history (no longer needed)
-  scroll_history = {}
+  if scroll_indicator.timer > 0 then
+    scroll_indicator.timer = scroll_indicator.timer - dt
+  end
 
   -- Clean up old pan trail
   local current_time = love.timer.getTime()
@@ -185,6 +211,18 @@ function love.draw()
 
   -- Removed scroll indicator drawing
 
+  -- Draw scroll indicator
+  if scroll_indicator.active and scroll_indicator.timer > 0 then
+    local alpha = scroll_indicator.timer
+    love.graphics.setColor(0, 1, 0, alpha)
+    local x = scroll_indicator.x * love.graphics.getWidth()
+    local y = scroll_indicator.y * love.graphics.getHeight()
+    local line_length = 50
+    love.graphics.setLineWidth(3)
+    love.graphics.line(x, y, x + scroll_indicator.dx * line_length, y + scroll_indicator.dy * line_length)
+    love.graphics.print(string.format("SCROLL %.2f, %.2f", scroll_indicator.dx, scroll_indicator.dy), x + 10, y - 20)
+  end
+
   -- Draw zoom indicator
   if zoom_indicator.active and zoom_indicator.timer > 0 then
     local alpha = zoom_indicator.timer
@@ -202,12 +240,14 @@ function love.draw()
   love.graphics.print("Gesture Detection Demo", 10, 10)
   love.graphics.print(string.format("Camera: x=%.1f, y=%.1f, zoom=%.2fx", camera.x, camera.y, camera.zoom), 10, 30)
   love.graphics.print(string.format("Fingers: %d", gesture_detector:getFingerCount()), 10, 50)
+  love.graphics.print(string.format("Scrolling Enabled: %s (Press 's' to toggle)", tostring(gesture_detector.enable_scrolling)), 10, 70)
 
   -- Instructions
   love.graphics.setColor(1, 1, 1, 0.7)
   love.graphics.print("Instructions:", 10, love.graphics.getHeight() - 80)
   love.graphics.print("• 2 fingers: Pan or Zoom (pinch/expand)", 10, love.graphics.getHeight() - 60)
   love.graphics.print("• ESC: Quit", 10, love.graphics.getHeight() - 40)
+  love.graphics.print("• R: Reset Camera", 10, love.graphics.getHeight() - 20)
 end
 
 function love.keypressed(key)
@@ -218,6 +258,9 @@ function love.keypressed(key)
     camera.x = 0
     camera.y = 0
     camera.zoom = 1.0
+  elseif key == "s" then
+    gesture_detector:set_enable_scrolling(not gesture_detector.enable_scrolling)
+    print(string.format("Scrolling Enabled: %s", tostring(gesture_detector.enable_scrolling)))
   end
 end
 
