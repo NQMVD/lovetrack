@@ -23,7 +23,7 @@ Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium
 doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore
 veritatis et quasi architecto beatae vitae dicta sunt explicabo.
 
-Nemo enim ipsam voluptatem quia volupts sit aspernatur aut odit aut fugit,
+Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit,
 sed quia consequuntur magni dolores eos qui ratione voluptatem sequi
 nesciunt. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet.
 
@@ -45,21 +45,20 @@ application that supports trackpad scrolling.
 ]]
 
 function love.load()
-  love.window.setTitle("Multi-Touch Gesture Test - Fixed State Lock")
+  love.window.setTitle("Multi-Touch Gesture Test - Final")
   love.window.setMode(1000, 600)
 
   font = love.graphics.newFont(14)
   love.graphics.setFont(font)
 
-  -- Initialize gesture detection with very sensitive zoom detection
   gesture = Gesture.new({
-    deadzone_movement_activate = 2,
+    deadzone_movement_activate = 3,
     deadzone_movement_continue = 0.1,
-    deadzone_zoom_activate = 0.007,
+    deadzone_zoom_activate = 0.008,
     deadzone_zoom_continue = 0.0005,
     scroll_angle_max = math.rad(30),
-    smoothing_factor = 0.45,
-    zoom_sensitivity = 2.0,
+    smoothing_factor = 0.65,
+    zoom_sensitivity = 1.0,
     min_zoom_distance = 0.01,
   })
 
@@ -152,10 +151,10 @@ function love.draw()
   love.graphics.setColor(1, 1, 1)
   love.graphics.print(string.format("Scroll: %.2f, %.2f", scroll_x, scroll_y), 10, 25)
   love.graphics.print(string.format("Pan: %.2f, %.2f", pan_x, pan_y), 10, 40)
-  love.graphics.print(string.format("Zoom: %.3f", zoom), 10, 55)
+  love.graphics.print(string.format("Zoom: %.3f Grid: %.3f", zoom, grid_zoom), 10, 55)
 
   -- Left view - scrollable text
-  love.graphics.print("Text View (Try scrolling vertically)", 10, 80)
+  love.graphics.print("Text View (Scroll vertically)", 10, 80)
 
   love.graphics.setScissor(0, 100, mid_x, screen_h - 100)
   love.graphics.print(sample_text, 10, 100 - text_scroll_y)
@@ -168,22 +167,8 @@ function love.draw()
   love.graphics.scale(grid_zoom, grid_zoom)
 
   love.graphics.setColor(1, 1, 1)
-  love.graphics.print("Grid View (Try pinch/zoom)", 10, 10)
+  love.graphics.print("Grid View (Pan diagonal, Zoom pinch)", 10, 10)
   love.graphics.print("Zoom: " .. string.format("%.2f", grid_zoom), 10, 30)
-
-  -- Draw zoom center indicator when zooming
-  -- if gesture:getState() == "zooming" then
-  --   local center_x, center_y = gesture:getCenter()
-  --   if center_x > mid_x then
-  --     love.graphics.push()
-  --     love.graphics.origin()
-  --     love.graphics.setColor(1, 0, 0, 0.8)
-  --     love.graphics.circle("line", center_x, center_y, 15)
-  --     love.graphics.line(center_x - 8, center_y, center_x + 8, center_y)
-  --     love.graphics.line(center_x, center_y - 8, center_x, center_y + 8)
-  --     love.graphics.pop()
-  --   end
-  -- end
 
   -- Draw grid shapes
   for _, shape in ipairs(grid_shapes) do

@@ -28,26 +28,28 @@ function Gesture.new(config)
 
   -- Configuration with defaults
   self.config = {
-    -- Activation deadzones (higher - harder to start gesture)
-    deadzone_movement_activate = config and config.deadzone_movement_activate or 0.002,
-    deadzone_zoom_activate = config and config.deadzone_zoom_activate or 0.003,     -- Lowered significantly
+    -- Activation deadzones (distance from initial position)
+    deadzone_movement_activate = config and config.deadzone_movement_activate or 2,
+    deadzone_zoom_activate = config and config.deadzone_zoom_activate or 0.007,
 
-    -- Continuation deadzones (lower - easier to continue gesture)
-    deadzone_movement_continue = config and config.deadzone_movement_continue or 0.0005,
-    deadzone_zoom_continue = config and config.deadzone_zoom_continue or 0.0008,
+    -- Continuation deadzones (frame-to-frame delta)
+    deadzone_movement_continue = config and config.deadzone_movement_continue or 0.1,
+    deadzone_zoom_continue = config and config.deadzone_zoom_continue or 0.0005,
 
-    scroll_angle_max = config and config.scroll_angle_max or math.rad(25),
-    smoothing_factor = config and config.smoothing_factor or 0.2,
-    min_zoom_distance = config and config.min_zoom_distance or 0.015,     -- Lowered
-    zoom_sensitivity = config and config.zoom_sensitivity or 1.8,
+    scroll_angle_max = config and config.scroll_angle_max or math.rad(30),
+    smoothing_factor = config and config.smoothing_factor or 0.45,
+    zoom_sensitivity = config and config.zoom_sensitivity or 2.0,
+    min_zoom_distance = config and config.min_zoom_distance or 0.01,
   }
 
   -- State tracking
-  self.state = "idle"           -- idle, scrolling, panning, zooming
-  self.gesture_locked = false   -- Once locked, stays locked until fingers lift
-  self.fingers = ffi.new("TrackpadFinger[20]")
+  self.state = "idle"         -- idle, scrolling, panning, zooming
+  self.gesture_locked = false -- Once locked, stays locked until fingers lift
+  self.fingers = ffi.new("TrackpadFinger[11]")
   self.prev_fingers = {}
+  self.initial_fingers = {} -- Store initial finger positions
   self.has_prev_fingers = false
+  self.has_initial_fingers = false
 
   -- Delta tracking
   self.deltas = {
@@ -96,27 +98,32 @@ function Gesture:update(dt)
 
   if finger_count == 0 then
     self:_resetState()
-  elseif finger_count == 2 and self.has_prev_fingers then
-    self:_processTwoFingerGesture()
   elseif finger_count == 2 then
-    -- First frame with two fingers, just store them
+    if not self.has_initial_fingers then
+      -- Store initial finger positions
+      self:_storeInitialFingers()
+    elseif self.has_prev_fingers then
+      self:_processTwoFingerGesture()
+    end
     self:_storePreviousFingers(finger_count)
   else
     self:_resetState()
   end
 
   self:_applySmoothing(dt)
+end
 
-  if finger_count > 0 then
-    self:_storePreviousFingers(finger_count)
-  end
+function Gesture:_isWithinWindow(center_x, center_y)
+  local screen_w, screen_h = love.graphics.getDimensions()
+  return center_x >= 0 and center_x <= screen_w and center_y >= 0 and center_y <= screen_h
 end
 
 function Gesture:_processTwoFingerGesture()
   local f1, f2 = self.fingers[0], self.fingers[1]
   local pf1, pf2 = self.prev_fingers[1], self.prev_fingers[2]
+  local if1, if2 = self.initial_fingers[1], self.initial_fingers[2]
 
-  if not pf1 or not pf2 then return end
+  if not pf1 or not pf2 or not if1 or not if2 then return end
 
   -- Calculate current metrics
   local curr_center_x = (f1.x + f2.x) * 0.5
@@ -128,60 +135,74 @@ function Gesture:_processTwoFingerGesture()
   local prev_center_y = (pf1.y + pf2.y) * 0.5
   local prev_distance = math.sqrt((pf1.x - pf2.x) ^ 2 + (pf1.y - pf2.y) ^ 2)
 
-  -- Calculate deltas
+  -- Calculate initial metrics
+  local initial_center_x = (if1.x + if2.x) * 0.5
+  local initial_center_y = (if1.y + if2.y) * 0.5
+  local initial_distance = math.sqrt((if1.x - if2.x) ^ 2 + (if1.y - if2.y) ^ 2)
+
+  -- Calculate deltas (frame-to-frame)
   local dx = curr_center_x - prev_center_x
   local dy = curr_center_y - prev_center_y
   local distance_delta = curr_distance - prev_distance
+
+  -- Calculate distance from initial position (for activation)
+  local initial_dx = curr_center_x - initial_center_x
+  local initial_dy = curr_center_y - initial_center_y
+  local initial_distance_change = curr_distance - initial_distance
 
   -- Convert to screen coordinates
   local screen_w, screen_h = love.graphics.getDimensions()
   dx = dx * screen_w
   dy = dy * screen_h
+  initial_dx = initial_dx * screen_w
+  initial_dy = initial_dy * screen_h
 
   -- Store center for zoom operations
   self.deltas.center_x = curr_center_x * screen_w
   self.deltas.center_y = curr_center_y * screen_h
 
+  -- Check if gesture is within Love2D window
+  if not self:_isWithinWindow(self.deltas.center_x, self.deltas.center_y) then
+    return -- Ignore gestures outside window
+  end
+
   -- ONLY detect gesture if we're in idle state (not locked)
   if not self.gesture_locked then
-    -- Choose deadzone based on current state
-    local movement_deadzone = self.config.deadzone_movement_activate
-    local zoom_deadzone = self.config.deadzone_zoom_activate
-
-    -- Check what's happening (without applying deadzones for detection)
-    local has_movement = (math.abs(dx) > movement_deadzone or math.abs(dy) > movement_deadzone)
-    local has_zoom = (math.abs(distance_delta) > zoom_deadzone and curr_distance > self.config.min_zoom_distance)
+    -- Use initial position distance for activation
+    local movement_distance = math.sqrt(initial_dx ^ 2 + initial_dy ^ 2)
+    local has_movement = (movement_distance > self.config.deadzone_movement_activate)
+    local has_zoom = (
+      math.abs(initial_distance_change) > self.config.deadzone_zoom_activate
+      and curr_distance > self.config.min_zoom_distance
+    )
 
     -- ZOOM DETECTION FIRST (highest priority)
     if has_zoom then
-      print("Activating ZOOM")
+      -- print("Activating ZOOM")
       self.state = "zooming"
       self.gesture_locked = true
       self.zoom_center = { x = self.deltas.center_x, y = self.deltas.center_y }
       -- MOVEMENT DETECTION (lower priority)
     elseif has_movement then
-      -- Determine scroll vs pan based on movement angle
-      local angle = math.atan2(math.abs(dy), math.abs(dx))
+      -- Determine scroll vs pan based on movement angle from initial position
+      local angle = math.atan2(math.abs(initial_dy), math.abs(initial_dx))
 
       if not self.scroll_locked and (angle < self.config.scroll_angle_max or angle > (math.pi / 2 - self.config.scroll_angle_max)) then
-        print("Activating SCROLL")
+        -- print("Activating SCROLL")
         self.state = "scrolling"
         self.gesture_locked = true
       else
-        print("Activating PAN")
+        -- print("Activating PAN")
         self.state = "panning"
         self.gesture_locked = true
       end
     end
   end
 
-  -- Apply appropriate deadzones for continuation
-  local movement_deadzone = self.config.deadzone_movement_continue
-  local zoom_deadzone = self.config.deadzone_zoom_continue
-
-  if math.abs(dx) < movement_deadzone then dx = 0 end
-  if math.abs(dy) < movement_deadzone then dy = 0 end
-  if math.abs(distance_delta) < zoom_deadzone then distance_delta = 0 end
+  -- Apply continuation deadzones to frame-to-frame deltas
+  if math.abs(dx) < self.config.deadzone_movement_continue then dx = 0 end
+  if math.abs(dy) < self.config.deadzone_movement_continue then dy = 0 end
+  if math.abs(distance_delta) < self.config.deadzone_zoom_continue then distance_delta = 0 end
 
   -- Apply deltas based on current state
   if self.state == "scrolling" then
@@ -226,11 +247,25 @@ end
 
 function Gesture:_resetState()
   if self.state ~= "idle" then
-    print("Resetting to IDLE")
+    -- print("Resetting to IDLE")
   end
   self.state = "idle"
-  self.gesture_locked = false   -- Unlock when fingers lift
+  self.gesture_locked = false
   self.has_prev_fingers = false
+  self.has_initial_fingers = false
+  self.initial_fingers = {}
+end
+
+function Gesture:_storeInitialFingers()
+  self.initial_fingers = {}
+  for i = 0, 1 do -- Only store first two fingers
+    table.insert(self.initial_fingers, {
+      x = self.fingers[i].x,
+      y = self.fingers[i].y,
+      id = self.fingers[i].id
+    })
+  end
+  self.has_initial_fingers = true
 end
 
 function Gesture:_storePreviousFingers(count)
