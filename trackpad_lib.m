@@ -1,6 +1,10 @@
 #include <CoreFoundation/CoreFoundation.h>
+#include <pthread.h>
+#include <string.h>
 #include <math.h>
 #include "trackpad_lib.h"
+
+#define MAX_FINGERS 20
 
 // Private MultitouchSupport framework structs and functions
 typedef struct { float x,y; } mtPoint;
@@ -26,18 +30,19 @@ void MTRegisterContactFrameCallback(MTDeviceRef, MTContactCallbackFunction);
 void MTDeviceStart(MTDeviceRef, int);
 void MTDeviceStop(MTDeviceRef);
 
-static TrackpadCallback g_callback = NULL;
+// Globals for thread-safe data exchange
 static MTDeviceRef g_device = NULL;
+static pthread_mutex_t g_mutex;
+static int g_finger_count = 0;
+static TrackpadFinger g_finger_buffer[MAX_FINGERS];
 
-int trackpad_callback(int device, Finger *data, int nFingers, double timestamp, int frame) {
-    if (g_callback == NULL) {
-        return 0;
-    }
-
-    TrackpadFinger fingers[nFingers];
-    for (int i = 0; i < nFingers; i++) {
+// The internal callback that runs on the MT thread
+int internal_callback(int device, Finger *data, int nFingers, double timestamp, int frame) {
+    pthread_mutex_lock(&g_mutex);
+    g_finger_count = nFingers > MAX_FINGERS ? MAX_FINGERS : nFingers;
+    for (int i = 0; i < g_finger_count; i++) {
         Finger *f = &data[i];
-        fingers[i] = (TrackpadFinger){
+        g_finger_buffer[i] = (TrackpadFinger){
             .id = f->identifier,
             .x = f->normalized.pos.x,
             .y = f->normalized.pos.y,
@@ -50,29 +55,47 @@ int trackpad_callback(int device, Finger *data, int nFingers, double timestamp, 
             .state = f->state
         };
     }
-
-    g_callback(nFingers, fingers);
+    pthread_mutex_unlock(&g_mutex);
     return 0;
 }
 
-void trackpad_start(TrackpadCallback callback) {
+// Public API functions
+int trackpad_start() {
     if (g_device != NULL) {
-        return;
+        return 0; // Already started
     }
-    g_callback = callback;
+
+    if (pthread_mutex_init(&g_mutex, NULL) != 0) {
+        return -1; // Mutex init failed
+    }
 
     CFMutableArrayRef* deviceList = MTDeviceCreateList();
-    if (CFArrayGetCount((CFArrayRef)deviceList) > 0) {
+    if (deviceList && CFArrayGetCount((CFArrayRef)deviceList) > 0) {
         g_device = (MTDeviceRef)CFArrayGetValueAtIndex((CFArrayRef)deviceList, 0);
-        MTRegisterContactFrameCallback(g_device, trackpad_callback);
+        MTRegisterContactFrameCallback(g_device, internal_callback);
         MTDeviceStart(g_device, 0);
+        return 0; // Success
     }
+    return -1; // No device found
+}
+
+int trackpad_poll(TrackpadFinger* fingers, int max_fingers) {
+    if (g_device == NULL) {
+        return 0;
+    }
+    pthread_mutex_lock(&g_mutex);
+    int count = g_finger_count < max_fingers ? g_finger_count : max_fingers;
+    if (count > 0) {
+        memcpy(fingers, g_finger_buffer, count * sizeof(TrackpadFinger));
+    }
+    pthread_mutex_unlock(&g_mutex);
+    return count;
 }
 
 void trackpad_stop() {
     if (g_device != NULL) {
         MTDeviceStop(g_device);
+        pthread_mutex_destroy(&g_mutex);
         g_device = NULL;
-        g_callback = NULL;
     }
 }

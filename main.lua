@@ -1,6 +1,6 @@
 local ffi = require("ffi")
 
-ffi.cdef[[
+ffi.cdef [[
     typedef struct {
         int id;
         float x, y;
@@ -11,67 +11,45 @@ ffi.cdef[[
         int state;
     } TrackpadFinger;
 
-    typedef void (*TrackpadCallback)(int nFingers, const TrackpadFinger* fingers);
-
-    void trackpad_start(TrackpadCallback callback);
+    int trackpad_start();
+    int trackpad_poll(TrackpadFinger* fingers, int max_fingers);
     void trackpad_stop();
 ]]
 
 local trackpad_lib = ffi.load("trackpad")
 
--- A thread-safe queue to hold the trackpad data.
-local touch_queue = {}
-
-local function on_trackpad_data(nFingers, fingers)
-    -- This callback runs on a separate thread. It MUST copy the data from the
-    -- C-owned pointer into Lua-owned memory before the function returns.
-    local frame_data = {}
-    for i = 0, nFingers - 1 do
-        local c_finger = fingers[i]
-        -- Perform a deep copy from the C struct to a new Lua table.
-        local lua_finger = {
-            id = c_finger.id,
-            x = c_finger.x,
-            y = c_finger.y,
-            vx = c_finger.vx,
-            vy = c_finger.vy,
-            angle = c_finger.angle,
-            major_axis = c_finger.major_axis,
-            minor_axis = c_finger.minor_axis,
-            size = c_finger.size,
-            state = c_finger.state
-        }
-        table.insert(frame_data, lua_finger)
-    end
-    -- This is now a table of pure Lua tables, not cdata pointers.
-    table.insert(touch_queue, frame_data)
-end
-
--- Keep a reference to the callback to prevent it from being garbage collected
-local c_callback = ffi.cast("TrackpadCallback", on_trackpad_data)
+-- Max fingers the trackpad can detect (usually 11 for modern Mac trackpads)
+local MAX_FINGERS = 5
+-- Create a C array to hold the finger data when polling
+local c_fingers_array = ffi.new("TrackpadFinger[?]", MAX_FINGERS)
 
 function love.load()
-    trackpad_lib.trackpad_start(c_callback)
+  if trackpad_lib.trackpad_start() ~= 0 then
+    error("Failed to start trackpad service!")
+  end
+  print("Trackpad service started.")
 end
 
 function love.update(dt)
-    -- Process the queued trackpad data on the main thread.
-    while #touch_queue > 0 do
-        local frame_data = table.remove(touch_queue, 1)
-        for _, finger in ipairs(frame_data) do
-            print(string.format(
-                "Finger %d: pos=(%.2f, %.2f), vel=(%.2f, %.2f), state=%d",
-                finger.id, finger.x, finger.y, finger.vx, finger.vy, finger.state
-            ))
-        end
+  local nFingers = trackpad_lib.trackpad_poll(c_fingers_array, MAX_FINGERS)
+
+  if nFingers > 0 then
+    for i = 0, nFingers - 1 do
+      local finger = c_fingers_array[i]
+      print(string.format(
+        "Finger %2d: pos=(%.2f, %.2f), vel=(%.2f, %.2f), state=%d",
+        finger.id, finger.x, finger.y, finger.vx, finger.vy, finger.state
+      ))
     end
+  end
 end
 
 function love.draw()
-    -- Required love callback
+  -- Required love callback
 end
 
 function love.quit()
-    trackpad_lib.trackpad_stop()
-    return false
+  trackpad_lib.trackpad_stop()
+  print("Trackpad service stopped.")
+  return false
 end

@@ -12,13 +12,15 @@ typedef struct {
     int state;
 } TrackpadFinger;
 
-// The callback function that will be invoked with trackpad data.
-// It receives an array of TrackpadFinger structs and the number of fingers.
-typedef void (*TrackpadCallback)(int nFingers, const TrackpadFinger* fingers);
-
 // Starts the trackpad listening service.
-// You must provide a callback function to receive the data.
-void trackpad_start(TrackpadCallback callback);
+// Returns 0 on success, -1 on failure.
+int trackpad_start();
+
+// Polls for the latest trackpad data.
+// `fingers` should be a pointer to an array of TrackpadFinger structs.
+// `max_fingers` is the maximum number of fingers the array can hold.
+// Returns the number of fingers currently on the trackpad.
+int trackpad_poll(TrackpadFinger* fingers, int max_fingers);
 
 // Stops the trackpad listening service.
 void trackpad_stop();
