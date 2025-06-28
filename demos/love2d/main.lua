@@ -45,22 +45,20 @@ application that supports trackpad scrolling.
 ]]
 
 function love.load()
-  love.window.setTitle("Multi-Touch Gesture Test - Final")
-  love.window.setMode(1000, 600)
+  love.window.setTitle("Multi-Touch Gesture Test")
+  love.window.setMode(1200, 700, { msaa = 8, highdpi = true })
 
-  font = love.graphics.newFont(14)
+  font = love.graphics.newFont(13)
   love.graphics.setFont(font)
 
-  gesture = Gesture.new({
-    deadzone_movement_activate = 3,
-    deadzone_movement_continue = 0.1,
-    deadzone_zoom_activate = 0.008,
-    deadzone_zoom_continue = 0.0005,
-    scroll_angle_max = math.rad(30),
-    smoothing_factor = 0.65,
-    zoom_sensitivity = 1.0,
+  gesture = Gesture.new {
+    deadzone_movement_activate = 1,
+    deadzone_movement_continue = 1,
+    deadzone_zoom_activate = 1,
+    deadzone_zoom_continue = 1,
     min_zoom_distance = 0.01,
-  })
+    zoom_sensitivity = 1.0,
+  }
 
   -- Generate grid shapes
   for i = 1, 50 do
@@ -103,22 +101,20 @@ function love.update(dt)
       grid_offset_x = grid_offset_x + pan_x
       grid_offset_y = grid_offset_y + pan_y
     elseif gesture:getState() == "zooming" then
+      -- using this makes zooming achored based on trackpad position possible!
       local center_x, center_y = gesture:getCenter()
-      local mouse_x, mouse_y = love.mouse.getPosition()
 
-      if mouse_x > screen_w * 0.5 then
-        local local_center_x = center_x - screen_w * 0.5
-        local local_center_y = center_y
+      local local_center_x = center_x - screen_w * 0.5
+      local local_center_y = center_y
 
-        local prev_zoom = grid_zoom
-        grid_zoom = grid_zoom * zoom_factor
-        grid_zoom = math.max(0.2, math.min(8.0, grid_zoom))
+      local prev_zoom = grid_zoom
+      grid_zoom = grid_zoom * zoom_factor
+      grid_zoom = math.max(0.2, math.min(8.0, grid_zoom))
 
-        if zoom_factor ~= 1.0 then
-          local zoom_ratio = grid_zoom / prev_zoom
-          grid_offset_x = (grid_offset_x - local_center_x) * zoom_ratio + local_center_x
-          grid_offset_y = (grid_offset_y - local_center_y) * zoom_ratio + local_center_y
-        end
+      if zoom_factor ~= 1.0 then
+        local zoom_ratio = grid_zoom / prev_zoom
+        grid_offset_x = (grid_offset_x - local_center_x) * zoom_ratio + local_center_x
+        grid_offset_y = (grid_offset_y - local_center_y) * zoom_ratio + local_center_y
       end
     end
   end
@@ -153,9 +149,10 @@ function love.draw()
   love.graphics.print(string.format("Scroll: %.2f, %.2f", scroll_x, scroll_y), 10, 25)
   love.graphics.print(string.format("Pan: %.2f, %.2f", pan_x, pan_y), 10, 40)
   love.graphics.print(string.format("Zoom: %.3f Grid: %.3f", zoom, grid_zoom), 10, 55)
+  love.graphics.print(string.format("Finger States: min=%d avg=%d max=%d count=%d", gesture:_getFingerValues()), 10, 70)
 
   -- Left view - scrollable text
-  love.graphics.print("Text View (Scroll vertically)", 10, 80)
+  love.graphics.print("Text View (Scroll vertically)", 10, 90)
 
   love.graphics.setScissor(0, 100, mid_x, screen_h - 100)
   love.graphics.print(sample_text, 10, 100 - text_scroll_y)

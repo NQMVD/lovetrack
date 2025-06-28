@@ -22,6 +22,9 @@ int trackpad_start();
 // Returns the number of fingers currently on the trackpad.
 int trackpad_poll(TrackpadFinger* fingers, int max_fingers);
 
+// Reset the trackpad state.
+void trackpad_reset(TrackpadFinger* fingers, int max_fingers);
+
 // Stops the trackpad listening service.
 void trackpad_stop();
 

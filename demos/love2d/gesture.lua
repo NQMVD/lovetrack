@@ -29,18 +29,36 @@ function Gesture.new(config)
   -- Configuration with defaults
   self.config = {
     -- Activation deadzones (distance from initial position)
-    deadzone_movement_activate = config and config.deadzone_movement_activate or 2,
-    deadzone_zoom_activate = config and config.deadzone_zoom_activate or 0.007,
+    deadzone_movement_activate = config and config.deadzone_movement_activate or 1,
+    deadzone_zoom_activate = config and config.deadzone_zoom_activate or 1,
 
     -- Continuation deadzones (frame-to-frame delta)
-    deadzone_movement_continue = config and config.deadzone_movement_continue or 0.1,
-    deadzone_zoom_continue = config and config.deadzone_zoom_continue or 0.0005,
+    deadzone_movement_continue = config and config.deadzone_movement_continue or 1,
+    deadzone_zoom_continue = config and config.deadzone_zoom_continue or 1,
 
     scroll_angle_max = config and config.scroll_angle_max or math.rad(30),
-    smoothing_factor = config and config.smoothing_factor or 0.45,
-    zoom_sensitivity = config and config.zoom_sensitivity or 2.0,
+    smoothing_factor = config and config.smoothing_factor or 0.9,
+    zoom_sensitivity = config and config.zoom_sensitivity or 1.0,
     min_zoom_distance = config and config.min_zoom_distance or 0.01,
   }
+
+  -- map the deadzone values
+  self.config.deadzone_movement_activate =
+      self.config.deadzone_movement_activate * 4
+
+  self.config.deadzone_zoom_activate =
+      self.config.deadzone_zoom_activate * 0.01
+
+  self.config.deadzone_movement_continue =
+      self.config.deadzone_movement_continue * 0.1
+
+  self.config.deadzone_zoom_continue =
+      self.config.deadzone_zoom_continue * 0.0005
+
+  -- print("deadzone_movement_activate: " .. self.config.deadzone_movement_activate)
+  -- print("deadzone_zoom_activate: " .. self.config.deadzone_zoom_activate)
+  -- print("deadzone_movement_continue: " .. self.config.deadzone_movement_continue)
+  -- print("deadzone_zoom_continue: " .. self.config.deadzone_zoom_continue)
 
   -- State tracking
   self.state = "idle"         -- idle, scrolling, panning, zooming
@@ -87,7 +105,7 @@ function Gesture:setScrollLock(locked)
 end
 
 function Gesture:update(dt)
-  local finger_count = lib.trackpad_poll(self.fingers, 20)
+  local finger_count = lib.trackpad_poll(self.fingers, 11)
 
   -- Reset deltas
   self.deltas.scroll_x = 0
@@ -96,21 +114,42 @@ function Gesture:update(dt)
   self.deltas.pan_y = 0
   self.deltas.zoom_factor = 1.0
 
-  if finger_count == 0 then
-    self:_resetState()
-  elseif finger_count == 2 then
-    if not self.has_initial_fingers then
-      -- Store initial finger positions
-      self:_storeInitialFingers()
-    elseif self.has_prev_fingers then
-      self:_processTwoFingerGesture()
+  if finger_count == 2 then
+    local min, avg, max = self:_getFingerValues()
+    if min > 2 and max < 6 then
+      if not self.has_initial_fingers then
+        self:_storeInitialFingers()
+      elseif self.has_prev_fingers then
+        self:_processTwoFingerGesture()
+      end
+      self:_storePreviousFingers(finger_count)
     end
-    self:_storePreviousFingers(finger_count)
   else
     self:_resetState()
   end
 
   self:_applySmoothing(dt)
+end
+
+function Gesture:_getFingerValues()
+  local min_value = math.huge
+  local max_value = -math.huge
+  local total_value = 0
+  local count = 0
+  for i = 0, 10 do
+    if self.fingers[i].id ~= 0 then
+      local value = self.fingers[i].state
+      min_value = math.min(min_value, value)
+      max_value = math.max(max_value, value)
+      total_value = total_value + value
+      count = count + 1
+    end
+  end
+  if count > 1 then
+    return min_value, total_value / count, max_value, count
+  else
+    return 0, 0, 0, 0 -- No fingers detected
+  end
 end
 
 function Gesture:_isWithinWindow(center_x, center_y)
@@ -178,7 +217,6 @@ function Gesture:_processTwoFingerGesture()
 
     -- ZOOM DETECTION FIRST (highest priority)
     if has_zoom then
-      -- print("Activating ZOOM")
       self.state = "zooming"
       self.gesture_locked = true
       self.zoom_center = { x = self.deltas.center_x, y = self.deltas.center_y }
@@ -188,11 +226,9 @@ function Gesture:_processTwoFingerGesture()
       local angle = math.atan2(math.abs(initial_dy), math.abs(initial_dx))
 
       if not self.scroll_locked and (angle < self.config.scroll_angle_max or angle > (math.pi / 2 - self.config.scroll_angle_max)) then
-        -- print("Activating SCROLL")
         self.state = "scrolling"
         self.gesture_locked = true
       else
-        -- print("Activating PAN")
         self.state = "panning"
         self.gesture_locked = true
       end
@@ -246,13 +282,11 @@ function Gesture:_lerp(a, b, t)
 end
 
 function Gesture:_resetState()
-  if self.state ~= "idle" then
-    -- print("Resetting to IDLE")
-  end
   self.state = "idle"
   self.gesture_locked = false
   self.has_prev_fingers = false
   self.has_initial_fingers = false
+  lib.trackpad_reset(self.fingers, 11)
   self.initial_fingers = {}
 end
 

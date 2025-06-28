@@ -94,6 +94,22 @@ int trackpad_poll(TrackpadFinger* fingers, int max_fingers) {
     return count;
 }
 
+void trackpad_reset(TrackpadFinger* fingers, int max_fingers) {
+    if (g_device == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&g_mutex);
+    // reset the finger count and buffer
+    g_finger_count = 0;
+    memset(g_finger_buffer, 0, sizeof(g_finger_buffer));
+    int count = g_finger_count < max_fingers ? g_finger_count : max_fingers;
+    if (count > 0) {
+        memcpy(fingers, g_finger_buffer, count * sizeof(TrackpadFinger));
+    }
+    pthread_mutex_unlock(&g_mutex);
+    return;
+}
+
 void trackpad_stop() {
     if (g_device != NULL) {
         MTDeviceStop(g_device);
